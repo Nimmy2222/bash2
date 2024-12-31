@@ -15,8 +15,10 @@ Main Changes:
 ## Commands
 
 ```
+sm_bash or sm_bash2 - open the bash settings menu
 bash2_stats <name> - Show strafe stats
-bash2 - toggle admin mode, lets you enable/disable printing of bash logs into the chat.
+bash2_admin - toggle admin mode, lets you enable/disable printing of bash logs into the chat.
+bash2_personal - toggle personal mode, lets you enable/disable only seeing your own logs in chat.
 bash2_test  - trigger a test message so you can know if webhooks are working
 ```
 

@@ -225,6 +225,7 @@ ConVar g_hGainLogSpjBan;
 ConVar g_hIdentificalStrafeBan;
 ConVar g_hBashCmdPublic;
 Cookie g_hEnabledCookie;
+Cookie g_hPersonalCookie;
 ConVar g_hBanIP;
 ConVar g_hSafeGroup;
 ConVar g_hIdentificalStrafeBanSafeGroup;
@@ -235,6 +236,7 @@ ConVar g_hOnlySendBans;
 ConVar g_hUseDiscordEmbeds;
 
 bool g_bAdminMode[MAXPLAYERS + 1];
+bool g_bPersonalMode[MAXPLAYERS + 1];
 //ConVar g_hQueryRate;
 ConVar g_hPersistentData;
 
@@ -289,6 +291,7 @@ public void OnPluginStart()
 	HookConVarChange(g_hBanLength, OnBanLengthChanged);
 
 	g_hEnabledCookie = RegClientCookie("bash2_logs_enabled", "if logs are on", CookieAccess_Private);
+	g_hPersonalCookie = RegClientCookie("bash2_logs_personal", "if only your own logs are printed", CookieAccess_Private);
 
 	AutoExecConfig(true, "bash", "sourcemod");
 
@@ -299,9 +302,11 @@ public void OnPluginStart()
 	RegAdminCmd("sm_bash2_test", Bash_Test, ADMFLAG_RCON, "trigger a test message so you can know if webhooks are working :)");
 	RegAdminCmd("sm_bash2_testban", Bash_TestBan, ADMFLAG_RCON, "ban a client using bash autoban function");
 
-	RegConsoleCmd("sm_bash2", Bash_AdminMode, "Opt in/out of admin mode (Prints bash info into chat).");
+	RegConsoleCmd("sm_bash", Bash_Settings, "Open the bash settings menu");
+	RegConsoleCmd("sm_bash2", Bash_Settings, "Open the bash settings menu");
 	RegConsoleCmd("bash2_stats", Bash_Stats, "Check a player's strafe stats");
 	RegConsoleCmd("bash2_admin", Bash_AdminMode, "Opt in/out of admin mode (Prints bash info into chat).");
+	RegConsoleCmd("bash2_personal", Bash_PersonalMode, "Opt in/out of personal mode (Prints only YOUR bash info into chat).");
 
 	HookEvent("player_jump", Event_PlayerJump);
 
@@ -360,17 +365,23 @@ public void OnLibraryRemoved(const char[] name)
 	g_bSteamWorks = LibraryExists("SteamWorks");
 }
 
-stock void PrintToAdmins(const char[] msg, any...)
+stock void PrintToAdmins(int client, const char[] msg, any...)
 {
 	char buffer[300];
-	VFormat(buffer, sizeof(buffer), msg, 2);
+	VFormat(buffer, sizeof(buffer), msg, 3);
 
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if(!IsClientPlayer(i) || !g_bAdminMode[i])
+		if(!IsClientPlayer(i) || !g_bAdminMode[i]) 
 		{
 			continue;
 		}
+
+		if(client != i && g_bPersonalMode[i])
+		{
+			continue;
+		}
+
 		Shavit_StopChatSound();
 		Shavit_PrintToChat(i, buffer);
 	}
@@ -451,12 +462,12 @@ void AutoBanPlayer(int client, bool disconnected = false)
 
 	if(!disconnected)
 	{
-		PrintToAdmins("%N has been banned.", client);
+		PrintToAdmins(client, "%N has been banned.", client);
 		PrintToServer("%N has been banned.", client);
 	}
 	else
 	{
-		PrintToAdmins("Disconnected client %s has been banned.", g_sSteamIdCache[client]);
+		PrintToAdmins(client, "Disconnected client %s has been banned.", g_sSteamIdCache[client]);
 		PrintToServer("Disconnected client %s has been banned.", g_sSteamIdCache[client]);
 	}
 }
@@ -619,7 +630,7 @@ public Action Timer_MOTD(Handle timer, any data)
 		GetClientEyeAngles(iclient, vAng);
 		if(FloatAbs(g_MOTDTestAngles[iclient][1] - vAng[1]) > 50.0)
 		{
-			PrintToAdmins("%N is strafe hacking", iclient);
+			PrintToAdmins(iclient, "%N is strafe hacking", iclient);
 		}
 		g_bMOTDTest[iclient] = false;
 	}
@@ -650,22 +661,33 @@ public void OnMapStart()
 	SaveOldLogs();
 }
 
-public void OnClientCookiesCached(int client)
+int CheckCookie(int client, Cookie cookie)
 {
-	g_bAdminMode[client] = false;
 	char sCookie[8];
-	GetClientCookie(client, g_hEnabledCookie, sCookie, sizeof(sCookie));
+
+	GetClientCookie(client, cookie, sCookie, sizeof(sCookie));
 
 	if(sCookie[0] == '\0')
 	{
-		SetClientCookie(client, g_hEnabledCookie, "0");
-		GetClientCookie(client, g_hEnabledCookie, sCookie, sizeof(sCookie));
+		SetClientCookie(client, cookie, "0");
 	}
 
-	int val = StringToInt(sCookie);
-	if(val)
+	return StringToInt(sCookie);
+}
+
+public void OnClientCookiesCached(int client)
+{
+	g_bAdminMode[client] = false;
+	g_bPersonalMode[client] = false;
+
+	if(CheckCookie(client, g_hEnabledCookie))
 	{
 		Bash_AdminMode(client, 0);
+	}
+
+	if(CheckCookie(client, g_hPersonalCookie))
+	{
+		Bash_PersonalMode(client, 0);
 	}
 }
 
@@ -925,7 +947,7 @@ public void OnYawRetrieved(QueryCookie cookie, int client, ConVarQueryResult res
 
 		if(g_mYawChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_yaw ConVar to %.4f", client, mYaw);
+			PrintToAdmins(client, "%N changed their m_yaw ConVar to %.4f", client, mYaw);
 		}
 	}
 
@@ -945,7 +967,7 @@ public void OnFilterRetrieved(QueryCookie cookie, int client, ConVarQueryResult 
 
 		if(g_mFilterChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_filter ConVar to %d", client, mFilter);
+			PrintToAdmins(client, "%N changed their m_filter ConVar to %d", client, mFilter);
 		}
 	}
 
@@ -966,7 +988,7 @@ public void OnCustomAccelRetrieved(QueryCookie cookie, int client, ConVarQueryRe
 
 		if(g_mCustomAccelChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_customaccel ConVar to %d", client, mCustomAccel);
+			PrintToAdmins(client, "%N changed their m_customaccel ConVar to %d", client, mCustomAccel);
 		}
 	}
 
@@ -987,7 +1009,7 @@ public void OnCustomAccelMaxRetrieved(QueryCookie cookie, int client, ConVarQuer
 
 		if(g_mCustomAccelMaxChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_customaccel_max ConVar to %f", client, mCustomAccelMax);
+			PrintToAdmins(client, "%N changed their m_customaccel_max ConVar to %f", client, mCustomAccelMax);
 		}
 	}
 
@@ -1008,7 +1030,7 @@ public void OnCustomAccelScaleRetrieved(QueryCookie cookie, int client, ConVarQu
 
 		if(g_mCustomAccelScaleChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_customaccel_scale ConVar to %f", client, mCustomAccelScale);
+			PrintToAdmins(client, "%N changed their m_customaccel_scale ConVar to %f", client, mCustomAccelScale);
 		}
 	}
 
@@ -1029,7 +1051,7 @@ public void OnCustomAccelExRetrieved(QueryCookie cookie, int client, ConVarQuery
 
 		if(g_mCustomAccelExponentChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_customaccel_exponent ConVar to %f", client, mCustomAccelExponent);
+			PrintToAdmins(client, "%N changed their m_customaccel_exponent ConVar to %f", client, mCustomAccelExponent);
 		}
 	}
 
@@ -1049,7 +1071,7 @@ public void OnRawInputRetrieved(QueryCookie cookie, int client, ConVarQueryResul
 
 		if(g_mRawInputChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their m_rawinput ConVar to %d", client, mRawInput);
+			PrintToAdmins(client, "%N changed their m_rawinput ConVar to %d", client, mRawInput);
 		}
 	}
 
@@ -1069,7 +1091,7 @@ public void OnSensitivityRetrieved(QueryCookie cookie, int client, ConVarQueryRe
 
 		if(g_SensitivityChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their sensitivity ConVar to %.4f", client, sensitivity);
+			PrintToAdmins(client, "%N changed their sensitivity ConVar to %.4f", client, sensitivity);
 		}
 	}
 
@@ -1089,7 +1111,7 @@ public void OnYawSensitivityRetrieved(QueryCookie cookie, int client, ConVarQuer
 
 		if(g_JoySensitivityChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their joy_yawsensitivity ConVar to %.2f", client, sensitivity);
+			PrintToAdmins(client, "%N changed their joy_yawsensitivity ConVar to %.2f", client, sensitivity);
 		}
 	}
 
@@ -1109,7 +1131,7 @@ public void OnZoomSensitivityRetrieved(QueryCookie cookie, int client, ConVarQue
 
 		if(g_ZoomSensitivityChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their %s ConVar to %.2f", client, cvarName, sensitivity);
+			PrintToAdmins(client, "%N changed their %s ConVar to %.2f", client, cvarName, sensitivity);
 		}
 	}
 
@@ -1129,7 +1151,7 @@ public void OnJoystickRetrieved(QueryCookie cookie, int client, ConVarQueryResul
 
 		if(g_JoyStickChangedCount[client] > 1)
 		{
-			PrintToAdmins("%N changed their joystick ConVar to %d", client, joyStick);
+			PrintToAdmins(client, "%N changed their joystick ConVar to %d", client, joyStick);
 		}
 	}
 
@@ -1151,6 +1173,19 @@ public Action Hook_OnTouch(int client, int entity)
 		g_bTouchesFuncRotating[client] = true;
 	}
 	return Plugin_Continue;
+}
+
+public Action Bash_Settings(int client, int args)
+{
+	if(!g_hBashCmdPublic.IntValue) {
+		if(!CheckCommandAccess(client, "sm_ban", ADMFLAG_BAN)) {
+			ReplyToCommand(client, "[BASH] You do not have permssions.");
+			return Plugin_Handled;
+		}
+	}
+
+	ShowBashSettings(client)
+	return Plugin_Handled;
 }
 
 public Action Bash_Stats(int client, int args)
@@ -1231,6 +1266,22 @@ public Action Bash_AdminMode(int client, int args)
 	return Plugin_Handled;
 }
 
+public Action Bash_PersonalMode(int client, int args)
+{
+	if(!g_hBashCmdPublic.IntValue) {
+		if(!CheckCommandAccess(client, "sm_ban", ADMFLAG_BAN)) {
+			ReplyToCommand(client, "[BASH] You do not have permssions.");
+			SetClientCookie(client, g_hPersonalCookie, "0");
+
+			return Plugin_Handled;
+		}
+	}
+	g_bPersonalMode[client] = !g_bPersonalMode[client];
+	SetClientCookie(client, g_hPersonalCookie, g_bPersonalMode[client] ? "1":"0");
+	ReplyToCommand(client, "[BASH] Show logs: %s", g_bPersonalMode[client] ? "Yours":"All");
+	return Plugin_Handled;
+}
+
 public Action Bash_Test(int client, int args)
 {
 	if (client == 0)
@@ -1268,6 +1319,51 @@ public Action Bash_TestBan(int client, int args)
 	}
 	AutoBanPlayer(target, discon);
 	return Plugin_Handled;
+}
+
+void ShowBashSettings(int client) 
+{
+	Menu menu = new Menu(BashSettings_Menu);
+	menu.SetTitle("[BASH] - Settings");
+
+	menu.AddItem("adminmode",		(g_bAdminMode[client]) ? "[x] Enable logs":"[ ] Enable logs");
+	if(g_bAdminMode[client])
+	{
+		menu.AddItem("personalmode",		(g_bPersonalMode[client]) ? "[You] Show logs":"[All] Show logs");
+	}
+	menu.AddItem("stats",			"Stats");
+
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int BashSettings_Menu(Menu menu, MenuAction action, int param1, int param2)
+{
+	if(action == MenuAction_Select)
+	{
+		char sInfo[32];
+		menu.GetItem(param2, sInfo, sizeof(sInfo));
+
+		if(StrEqual(sInfo, "adminmode"))
+		{
+			Bash_AdminMode(param1, GetClientUserId(param1));
+			ShowBashSettings(param1);
+		}
+		else if(StrEqual(sInfo, "personalmode"))
+		{
+			Bash_PersonalMode(param1, GetClientUserId(param1));
+			ShowBashSettings(param1);
+		}
+		else if(StrEqual(sInfo, "stats"))
+		{
+			ShowBashStats(param1, GetClientUserId(param1));
+		}
+	}
+
+	if (action & MenuAction_End)
+	{
+		delete menu;
+	}
+	return 0;
 }
 
 void ShowBashStats(int client, int userid)
@@ -2537,7 +2633,7 @@ void ProcessGainLog(int client, float gain, float spj, float yawwing)
 		color = Yellow;
 	}
 
-	PrintToAdmins("%s%N %s%s Gains: %s%.2f% %s| SPJ: %s%.1f %s| Turnbinds: %s%.1f% %s| Style:%s %s",
+	PrintToAdmins(client, "%s%N %s%s Gains: %s%.2f% %s| SPJ: %s%.1f %s| Turnbinds: %s%.1f% %s| Style:%s %s",
 	g_csChatStrings.sVariable, client, g_csChatStrings.sText, gainAdj, g_sBstatColorsHex[color], gain, g_csChatStrings.sText, g_csChatStrings.sVariable,
 	spj, g_csChatStrings.sText, g_csChatStrings.sVariable, yawwing, g_csChatStrings.sText, g_csChatStrings.sVariable, sStyle);
 
@@ -2568,7 +2664,7 @@ void ProcessAngleSnap(int client, float illegalPct, float timingPct)
 	AnticheatLog(client, false, "Angle Snap Pct: %.2f％ Timing: %.1f％ Style: %s Sens: %f Yaw: %f",
 	illegalPct * 100.0, timingPct * 100.0, sStyle, g_Sensitivity[client], g_mYaw[client]);
 
-	PrintToAdmins("%s%N Angle Snap Pct: %.2f% Timing: %.1f% Style: %s Sens: %.4f Yaw: %.4f",
+	PrintToAdmins(client, "%s%N Angle Snap Pct: %.2f% Timing: %.1f% Style: %s Sens: %.4f Yaw: %.4f",
 	g_csChatStrings.sWarning, client, illegalPct * 100.0, timingPct * 100.0, sStyle, g_Sensitivity[client], g_mYaw[client]);
 }
 
@@ -2608,7 +2704,7 @@ void ProcessLowDev(int client, float dev, float mean, bool start)
 
 	AnticheatLog(client, alert, "%s %sDev: %.2f Avg: %.2f Style: %s", devAdjective, start ? "Start":"End", dev, mean, sStyle);
 
-	PrintToAdmins("%s%N %s%s %s Dev: %s%.2f %s| Avg: %s%.2f %s| Style: %s%s",
+	PrintToAdmins(client, "%s%N %s%s %s Dev: %s%.2f %s| Avg: %s%.2f %s| Style: %s%s",
 	g_csChatStrings.sVariable, client, g_csChatStrings.sText, devAdjective, start ? "Start":"End", g_sBstatColorsHex[color], dev, g_csChatStrings.sText, g_csChatStrings.sVariable, mean, g_csChatStrings.sText,
 	g_csChatStrings.sVariable, sStyle);
 
@@ -2639,7 +2735,7 @@ void ProcessTooManyIdenticals(int client, int offset, int identicals, bool start
 
 	if(start)
 	{
-		PrintToAdmins("%s%N %sToo many %s%i %sstart strafes %s%i %sStyle: %s",
+		PrintToAdmins(client, "%s%N %sToo many %s%i %sstart strafes %s%i %sStyle: %s",
 		g_csChatStrings.sVariable, client, g_csChatStrings.sText, g_csChatStrings.sVariable, offset, g_csChatStrings.sText,
 		g_csChatStrings.sVariable, identicals, g_csChatStrings.sText, sStyle);
 
@@ -2647,7 +2743,7 @@ void ProcessTooManyIdenticals(int client, int offset, int identicals, bool start
 	}
 	else
 	{
-		PrintToAdmins("%s%N %sToo many %s%i %send strafes %s%i %sStyle: %s",
+		PrintToAdmins(client, "%s%N %sToo many %s%i %send strafes %s%i %sStyle: %s",
 		g_csChatStrings.sVariable, client, g_csChatStrings.sText, g_csChatStrings.sVariable, offset, g_csChatStrings.sText,
 		g_csChatStrings.sVariable, identicals, g_csChatStrings.sText, sStyle);
 
@@ -2675,7 +2771,7 @@ void ProcessIllegalAngles(int client)
 	AnticheatLog(client, false, "is turning with illegal yaw values (m_yaw: %f, sens: %f, m_customaccel: %d, count: %d, m_yaw changes: %d, Joystick: %d)",
 	g_mYaw[client], g_Sensitivity[client], g_mCustomAccel[client], g_iIllegalYawCount[client], g_mYawChangedCount[client], g_JoyStick[client]);
 
-	PrintToAdmins("%s%N %sIllegal Turns (m_yaw: %f, sens: %f, m_customaccel: %d, count: %d, m_yaw changes: %d, Joystick: %d)",
+	PrintToAdmins(client, "%s%N %sIllegal Turns (m_yaw: %f, sens: %f, m_customaccel: %d, count: %d, m_yaw changes: %d, Joystick: %d)",
 	g_csChatStrings.sVariable, client, g_csChatStrings.sText, g_mYaw[client], g_Sensitivity[client], g_mCustomAccel[client], g_iIllegalYawCount[client], g_mYawChangedCount[client], g_JoyStick[client]);
 }
 
@@ -2686,14 +2782,14 @@ void ProcessIllegalMovementValues(int client, bool invalidCombination, bool impo
 		AnticheatLog(client, false, "has invalid consecutive movement values, (Joystick = %d, YawChanges = %d/%d) - %s",
 		g_JoyStick[client], g_iYawChangeCount[client], g_iLastIllegalSidemoveCount[client], impossibleSidemove ? "BAN":"SUSPECT");
 
-		PrintToAdmins("%s%N %sInvalid Movement Values JoyStick = %d YawChanges = %d/%d - %s",
+		PrintToAdmins(client, "%s%N %sInvalid Movement Values JoyStick = %d YawChanges = %d/%d - %s",
 		g_csChatStrings.sVariable, client, g_csChatStrings.sText, g_JoyStick[client], g_iYawChangeCount[client], g_iLastIllegalSidemoveCount[client], impossibleSidemove ? "BAN":"SUSPECT");
 	}
 	else
 	{
 		AnticheatLog(client, false, "has invalid buttons and sidemove combination %d %d", g_iLastIllegalReason[client], g_InvalidButtonSidemoveCount[client]);
 
-		PrintToAdmins("%s%N %shas invalid buttons and sidemove %d %d",
+		PrintToAdmins(client, "%s%N %shas invalid buttons and sidemove %d %d",
 		g_csChatStrings.sVariable, client, g_csChatStrings.sText, g_iLastIllegalReason[client], g_InvalidButtonSidemoveCount[client]);
 	}
 }
